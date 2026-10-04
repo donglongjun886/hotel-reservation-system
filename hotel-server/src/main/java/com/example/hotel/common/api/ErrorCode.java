@@ -3,7 +3,7 @@ package com.example.hotel.common.api;
 public enum ErrorCode {
 
     SOLD_OUT(1001, "该房型所选日期已订满"),
-    PHONE_REGISTERED(1002, "手机号已注册"),
+    PHONE_REGISTERED(1002, "该手机号已注册，请直接登录"),
     CHECKIN_NOT_ALLOWED(1003, "不满足入住条件"),
     PARAM_INVALID(1004, "参数校验失败"),
     LOGIN_FAILED(1005, "手机号或密码错误"),

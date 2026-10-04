@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.example.hotel.common.api.ErrorCode;
 import com.example.hotel.common.exception.BizException;
 import com.example.hotel.inventory.InventoryService;
+import com.example.hotel.room.dto.RoomTypeAvailability;
 import com.example.hotel.room.entity.Room;
 import com.example.hotel.room.entity.RoomType;
 import com.example.hotel.room.mapper.RoomMapper;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 @Service
@@ -37,6 +39,20 @@ public class RoomService {
             throw new BizException(ErrorCode.NOT_FOUND, "房型不存在");
         }
         return roomType;
+    }
+
+    /** 各房型在 [checkin, checkout) 区间的剩余可订量（技术方案 §6.1 公开接口，P-C1 列表页） */
+    public List<RoomTypeAvailability> queryAvailability(LocalDate checkin, LocalDate checkout) {
+        if (checkin == null || checkout == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请选择入住和离店日期");
+        }
+        if (!checkout.isAfter(checkin)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "离店日期必须晚于入住日期");
+        }
+        return listRoomTypes().stream()
+                .map(type -> new RoomTypeAvailability(type.getId(),
+                        inventoryService.queryAvailability(type.getId(), checkin, checkout)))
+                .toList();
     }
 
     public int countRooms(Long typeId) {
