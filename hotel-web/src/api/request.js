@@ -16,7 +16,9 @@ request.interceptors.response.use(
   (response) => {
     const body = response.data
     if (body && body.code !== 0) {
-      ElMessage.error(body.message || '操作失败')
+      if (!response.config.skipErrorToast) {
+        ElMessage.error(body.message || '操作失败')
+      }
       return Promise.reject(body)
     }
     return body.data

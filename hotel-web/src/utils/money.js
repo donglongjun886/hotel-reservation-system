@@ -3,3 +3,8 @@
 export function formatYuan(fen) {
   return (fen / 100).toFixed(2)
 }
+
+// 表单输入的"元"→接口"分"，唯一的元→分换算出口，仅允许在提交接口前调用
+export function yuanToFen(yuan) {
+  return Math.round(Number(yuan) * 100)
+}
