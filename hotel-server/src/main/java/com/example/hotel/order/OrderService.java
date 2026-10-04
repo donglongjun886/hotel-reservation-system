@@ -7,12 +7,15 @@ import com.example.hotel.common.context.UserContext;
 import com.example.hotel.common.exception.BizException;
 import com.example.hotel.common.util.Validators;
 import com.example.hotel.inventory.InventoryService;
+import com.example.hotel.order.dto.AssignableRoomInfo;
+import com.example.hotel.order.dto.CheckInRequest;
 import com.example.hotel.order.dto.CreateOrderRequest;
 import com.example.hotel.order.dto.OrderInfo;
 import com.example.hotel.order.entity.HotelOrder;
 import com.example.hotel.order.entity.OrderStatus;
 import com.example.hotel.order.mapper.OrderMapper;
 import com.example.hotel.room.RoomService;
+import com.example.hotel.room.entity.Room;
 import com.example.hotel.room.entity.RoomType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -86,7 +89,7 @@ public class OrderService {
     /** 我的订单详情：仅本人订单可见，他人订单按不存在处理（不泄露） */
     public OrderInfo detailMine(String orderNo) {
         HotelOrder order = findMine(orderNo);
-        return OrderInfo.from(order, roomService.getRoomType(order.getRoomTypeId()).getName());
+        return OrderInfo.from(order, roomService.getRoomType(order.getRoomTypeId()).getName(), resolveRoomNo(order));
     }
 
     /** 取消：带源状态 + user_id 条件更新，成功后逐日释放库存（BR-04 宽松取消） */
@@ -100,6 +103,96 @@ public class OrderService {
         inventoryService.release(order.getRoomTypeId(), order.getCheckinDate(), order.getCheckoutDate());
     }
 
+    // ---------- 前台侧（admin） ----------
+
+    /** 前台订单查询：keyword 为空查全部，否则按订单号或订单上的住客手机号精确匹配（BR-01 代订口径） */
+    public List<OrderInfo> listForAdmin(String keyword) {
+        QueryWrapper<HotelOrder> query = new QueryWrapper<>();
+        if (keyword != null && !keyword.isBlank()) {
+            String value = keyword.trim();
+            query.and(q -> q.eq("order_no", value).or().eq("guest_phone", value));
+        }
+        query.orderByDesc("id");
+        List<HotelOrder> orders = orderMapper.selectList(query);
+        Map<Long, String> typeNames = roomService.listRoomTypes().stream()
+                .collect(Collectors.toMap(RoomType::getId, RoomType::getName));
+        return orders.stream()
+                .map(order -> OrderInfo.from(order, typeNames.get(order.getRoomTypeId())))
+                .toList();
+    }
+
+    /** 前台订单详情：不限归属，已入住订单追加房间号与身份证号 */
+    public OrderInfo detailForAdmin(String orderNo) {
+        HotelOrder order = findByOrderNo(orderNo);
+        return OrderInfo.from(order, roomService.getRoomType(order.getRoomTypeId()).getName(), resolveRoomNo(order));
+    }
+
+    /** 该订单房型当前可分配房间（不含在住房间，TC-D08） */
+    public List<AssignableRoomInfo> listAssignableRooms(String orderNo) {
+        HotelOrder order = findByOrderNo(orderNo);
+        return roomService.listAssignableRooms(order.getRoomTypeId()).stream()
+                .map(AssignableRoomInfo::from)
+                .toList();
+    }
+
+    /**
+     * 办理入住（BR-06，技术方案 §5.3）：四项校验 → 房间行锁 → 锁内复查无在住订单（当前读）
+     * → 带源状态条件更新。并发分配同一房间在行锁处串行化，后到者复查时拒绝；
+     * 生成列唯一索引（uk_order_active_room）在 DB 层兜底。
+     */
+    @Transactional
+    public OrderInfo checkIn(String orderNo, CheckInRequest request) {
+        HotelOrder order = findByOrderNo(orderNo);
+        validateCheckInRules(order, request);
+        Room room = roomService.getByRoomNo(request.getRoomNo().trim());
+        if (!room.getRoomTypeId().equals(order.getRoomTypeId())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "所选房间不属于该订单房型");
+        }
+        roomService.lockById(room.getId());
+        if (orderMapper.selectCheckedInIdByRoomId(room.getId()) != null) {
+            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "房间刚被分配，请刷新重选");
+        }
+        if (orderMapper.checkIn(orderNo, room.getId(), request.getIdCard().trim()) == 0) {
+            throw new BizException(ErrorCode.ORDER_STATUS_CHANGED);
+        }
+        HotelOrder checkedIn = findByOrderNo(orderNo);
+        return OrderInfo.from(checkedIn, roomService.getRoomType(checkedIn.getRoomTypeId()).getName(), room.getRoomNo());
+    }
+
+    /** 办理退房：带源状态条件更新，成功后逐日释放库存（提前退房剩余晚数立即可再售，BR-07） */
+    @Transactional
+    public void checkOut(String orderNo) {
+        HotelOrder order = findByOrderNo(orderNo);
+        if (orderMapper.checkOut(orderNo) == 0) {
+            throw new BizException(ErrorCode.ORDER_STATUS_CHANGED, "订单状态已变更，请刷新");
+        }
+        inventoryService.release(order.getRoomTypeId(), order.getCheckinDate(), order.getCheckoutDate());
+    }
+
+    /** BR-06 入住校验：状态、入住窗口（入住日 ≤ 今天 < 离店日）、身份证格式、有空闲房间，文案对齐原型 P-A3 */
+    private void validateCheckInRules(HotelOrder order, CheckInRequest request) {
+        if (order.getStatus() != OrderStatus.CONFIRMED) {
+            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "该订单当前状态不可办理入住");
+        }
+        LocalDate today = LocalDate.now();
+        if (today.isBefore(order.getCheckinDate())) {
+            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "未到入住日期（入住日：" + order.getCheckinDate() + "）");
+        }
+        if (!today.isBefore(order.getCheckoutDate())) {
+            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED,
+                    "已超过可入住时间（离店日：" + order.getCheckoutDate() + "），请引导客人取消重订");
+        }
+        if (request == null || !Validators.isIdCard(request.getIdCard())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "身份证号格式不正确");
+        }
+        if (request.getRoomNo() == null || request.getRoomNo().isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请选择要分配的房间");
+        }
+        if (roomService.listAssignableRooms(order.getRoomTypeId()).isEmpty()) {
+            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "该房型当前无空闲房间");
+        }
+    }
+
     private HotelOrder findMine(String orderNo) {
         LoginUser user = UserContext.require();
         HotelOrder order = orderMapper.selectOne(new QueryWrapper<HotelOrder>()
@@ -109,6 +202,18 @@ public class OrderService {
             throw new BizException(ErrorCode.NOT_FOUND, "订单不存在");
         }
         return order;
+    }
+
+    private HotelOrder findByOrderNo(String orderNo) {
+        HotelOrder order = orderMapper.selectOne(new QueryWrapper<HotelOrder>().eq("order_no", orderNo));
+        if (order == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "订单不存在");
+        }
+        return order;
+    }
+
+    private String resolveRoomNo(HotelOrder order) {
+        return order.getRoomId() != null ? roomService.getRoom(order.getRoomId()).getRoomNo() : null;
     }
 
     /** BR-01 预订规则：校验失败直接拒绝，不进入库存占用环节 */

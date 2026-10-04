@@ -63,6 +63,19 @@ public class InventoryService {
         }
     }
 
+    /**
+     * UC-09 房间数变更同步（决策 13）：先补建未来窗口缺失的库存行（新增房型时一行都没有），
+     * 再把 stay_date ≥ 今天 的库存行 total_count 刷成当前房间数；occupied_count 不动，历史日期行不改。
+     * REQUIRED 传播，由 room 维护接口的事务承载。
+     */
+    @Transactional
+    public void syncTotalForFutureDates(Long typeId) {
+        int totalRooms = inventoryMapper.countRooms(typeId);
+        LocalDate today = LocalDate.now();
+        inventoryMapper.preCreate(typeId, today, today.plusDays(InventoryPreCreator.PRE_CREATE_DAYS), totalRooms);
+        inventoryMapper.syncFutureTotal(typeId, today, totalRooms);
+    }
+
     private void occupyOneDate(Long typeId, LocalDate date) {
         // 一致性读判断行是否存在（不加锁，避免对不存在行的加锁 UPDATE 产生间隙锁）；
         // 预创建窗口内恒为存在，未命中即窗口外日期

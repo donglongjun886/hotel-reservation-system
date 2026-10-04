@@ -39,4 +39,10 @@ public interface InventoryMapper extends BaseMapper<DailyInventory> {
             + "SELECT #{typeId}, d, #{totalRooms}, 0 FROM dates")
     int preCreate(@Param("typeId") Long typeId, @Param("startDate") LocalDate startDate,
                   @Param("endDate") LocalDate endDate, @Param("totalRooms") int totalRooms);
+
+    /** UC-09 房间数变更同步：把 stay_date ≥ fromDate 的库存行 total_count 刷成新房间数（历史日期行不改） */
+    @Update("UPDATE daily_inventory SET total_count = #{totalRooms} "
+            + "WHERE room_type_id = #{typeId} AND stay_date >= #{fromDate}")
+    int syncFutureTotal(@Param("typeId") Long typeId, @Param("fromDate") LocalDate fromDate,
+                        @Param("totalRooms") int totalRooms);
 }

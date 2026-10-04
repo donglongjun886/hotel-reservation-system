@@ -19,9 +19,16 @@ public class OrderInfo {
     /** 订单总金额，单位：分 */
     private Long amount;
     private OrderStatus status;
+    /** 已入住后追加：房间号、身份证号（入住前为 null） */
+    private String roomNo;
+    private String idCard;
     private LocalDateTime createdAt;
 
     public static OrderInfo from(HotelOrder order, String roomTypeName) {
+        return from(order, roomTypeName, null);
+    }
+
+    public static OrderInfo from(HotelOrder order, String roomTypeName, String roomNo) {
         OrderInfo info = new OrderInfo();
         info.orderNo = order.getOrderNo();
         info.roomTypeId = order.getRoomTypeId();
@@ -33,6 +40,8 @@ public class OrderInfo {
         info.guestPhone = order.getGuestPhone();
         info.amount = order.getAmount().movePointRight(2).longValueExact();
         info.status = order.getStatus();
+        info.roomNo = roomNo;
+        info.idCard = order.getIdCard();
         info.createdAt = order.getCreatedAt();
         return info;
     }
@@ -75,6 +84,14 @@ public class OrderInfo {
 
     public OrderStatus getStatus() {
         return status;
+    }
+
+    public String getRoomNo() {
+        return roomNo;
+    }
+
+    public String getIdCard() {
+        return idCard;
     }
 
     public LocalDateTime getCreatedAt() {
