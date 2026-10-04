@@ -1,20 +1,12 @@
 import request from './request'
 
-// 金额口径：接口传"分"整数，分→元换算只允许在 api 层，组件拿到的就是元
-function toYuan(fen) {
-  return fen / 100
-}
-
-function convertRoomType(info) {
-  return { ...info, price: toYuan(info.price) }
-}
-
+// 金额口径：price 为"分"整数，组件持分、仅在模板渲染处用 formatYuan 格式化（utils/money.js）
 export function listRoomTypes() {
-  return request.get('/room-types').then((list) => list.map(convertRoomType))
+  return request.get('/room-types')
 }
 
 export function getRoomType(id) {
-  return request.get(`/room-types/${id}`).then(convertRoomType)
+  return request.get(`/room-types/${id}`)
 }
 
 export function queryAvailability(checkin, checkout) {

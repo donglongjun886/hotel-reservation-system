@@ -4,7 +4,7 @@
     <div class="page" v-if="roomType">
       <div class="img-placeholder">房型图片</div>
       <h2>{{ roomType.name }}</h2>
-      <div class="price">{{ roomType.price }} 元/晚</div>
+      <div class="price">{{ formatYuan(roomType.price) }} 元/晚</div>
       <p class="desc">{{ roomType.description }}</p>
 
       <el-divider />
@@ -12,7 +12,7 @@
         <span>入住：{{ checkin }}</span>
         <span>离店：{{ checkout }}</span>
         <span>晚数：{{ nights }} 晚</span>
-        <span class="subtotal">小计：{{ subtotal }} 元</span>
+        <span class="subtotal">小计：{{ formatYuan(subtotalFen) }} 元</span>
         <el-button size="small" @click="editing = !editing">修改日期</el-button>
       </div>
       <div v-if="editing" class="date-edit">
@@ -33,6 +33,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import GuestNav from './GuestNav.vue'
 import { getRoomType } from '../../api/room'
+import { formatYuan } from '../../utils/money'
 import { today, tomorrow, daysBetween } from '../../utils/date'
 
 const route = useRoute()
@@ -47,7 +48,8 @@ onMounted(async () => {
 })
 
 const nights = computed(() => daysBetween(checkin.value, checkout.value))
-const subtotal = computed(() => (roomType.value && nights.value > 0 ? roomType.value.price * nights.value : 0))
+// 单价为"分"整数，整数乘法无精度问题；仅在模板渲染处格式化
+const subtotalFen = computed(() => (roomType.value && nights.value > 0 ? roomType.value.price * nights.value : 0))
 
 function onDateChange() {
   if (!checkin.value || !checkout.value) {

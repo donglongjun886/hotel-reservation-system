@@ -16,6 +16,7 @@ import com.example.hotel.inventory.InventoryService;
 import com.example.hotel.inventory.entity.DailyInventory;
 import com.example.hotel.inventory.mapper.InventoryMapper;
 import com.example.hotel.order.dto.AssignableRoomInfo;
+import com.example.hotel.order.dto.CheckInPrecheckInfo;
 import com.example.hotel.order.dto.CheckInRequest;
 import com.example.hotel.order.dto.CreateOrderRequest;
 import com.example.hotel.order.dto.OrderInfo;
@@ -34,10 +35,12 @@ import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -270,6 +273,38 @@ class OrderAdminServiceTest {
         assertEquals(OrderStatus.CONFIRMED, findByOrderNo(pending.getOrderNo()).getStatus());
     }
 
+    @Test
+    void checkInPrecheck_withinWindow_pass() {
+        // TC-D10：窗口内的已确认订单预检通过，无阻断原因，且不做任何状态变更
+        LoginUser user = newGuest();
+        LocalDate today = LocalDate.now();
+        OrderInfo order = createOrder(user, today, today.plusDays(1));
+
+        CheckInPrecheckInfo precheck = orderService.checkInPrecheck(order.getOrderNo());
+
+        assertTrue(precheck.isPass());
+        assertTrue(precheck.getReasons().isEmpty());
+        assertEquals(OrderStatus.CONFIRMED, findByOrderNo(order.getOrderNo()).getStatus());
+    }
+
+    @Test
+    void checkInPrecheck_notReady_reportsReasons() {
+        // TC-D10：未到入住日 / 非已确认状态，预检不通过，原因文案与办理入住报错一致
+        LoginUser user = newGuest();
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        OrderInfo future = createOrder(user, tomorrow, tomorrow.plusDays(2));
+
+        CheckInPrecheckInfo notYet = orderService.checkInPrecheck(future.getOrderNo());
+        assertFalse(notYet.isPass());
+        assertEquals(List.of("未到入住日期（入住日：" + tomorrow + "）"), notYet.getReasons());
+
+        OrderInfo checkedIn = createOrder(user, LocalDate.now(), LocalDate.now().plusDays(1));
+        forceStatus(checkedIn.getOrderNo(), OrderStatus.CHECKED_IN);
+        CheckInPrecheckInfo wrongStatus = orderService.checkInPrecheck(checkedIn.getOrderNo());
+        assertFalse(wrongStatus.isPass());
+        assertEquals(List.of("该订单当前状态不可办理入住"), wrongStatus.getReasons());
+    }
+
     // ---------- TC-E01~E05 退房与终态 ----------
 
     @Test
@@ -386,6 +421,7 @@ class OrderAdminServiceTest {
     private OrderInfo createOrder(LoginUser user, String guestName, String guestPhone,
                                   LocalDate checkin, LocalDate checkout) {
         CreateOrderRequest request = new CreateOrderRequest();
+        request.setRequestNo(UUID.randomUUID().toString());
         request.setRoomTypeId(TYPE_ID);
         request.setCheckinDate(checkin);
         request.setCheckoutDate(checkout);

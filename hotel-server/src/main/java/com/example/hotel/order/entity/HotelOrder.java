@@ -14,6 +14,8 @@ public class HotelOrder {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String orderNo;
+    /** 客户端幂等请求号：同一 request_no 重复提交返回首次创建的订单 */
+    private String requestNo;
     private Long userId;
     private String guestName;
     private String guestPhone;
@@ -43,6 +45,14 @@ public class HotelOrder {
 
     public void setOrderNo(String orderNo) {
         this.orderNo = orderNo;
+    }
+
+    public String getRequestNo() {
+        return requestNo;
+    }
+
+    public void setRequestNo(String requestNo) {
+        this.requestNo = requestNo;
     }
 
     public Long getUserId() {

@@ -2,6 +2,7 @@ package com.example.hotel.order;
 
 import com.example.hotel.common.api.Result;
 import com.example.hotel.order.dto.AssignableRoomInfo;
+import com.example.hotel.order.dto.CheckInPrecheckInfo;
 import com.example.hotel.order.dto.CheckInRequest;
 import com.example.hotel.order.dto.OrderInfo;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,6 +39,12 @@ public class OrderAdminController {
     @GetMapping("/{orderNo}/assignable-rooms")
     public Result<List<AssignableRoomInfo>> assignableRooms(@PathVariable String orderNo) {
         return Result.ok(orderService.listAssignableRooms(orderNo));
+    }
+
+    /** 入住预检（原型 P-A3）：打开详情页即展示校验结果，不做任何状态变更 */
+    @GetMapping("/{orderNo}/checkin-precheck")
+    public Result<CheckInPrecheckInfo> checkInPrecheck(@PathVariable String orderNo) {
+        return Result.ok(orderService.checkInPrecheck(orderNo));
     }
 
     @PostMapping("/{orderNo}/check-in")

@@ -9,7 +9,7 @@
         <el-descriptions v-if="order" :column="1" border class="summary">
           <el-descriptions-item label="房型">{{ order.roomTypeName }}</el-descriptions-item>
           <el-descriptions-item label="入住/离店">{{ order.checkinDate }} ~ {{ order.checkoutDate }}</el-descriptions-item>
-          <el-descriptions-item label="金额">{{ order.amount }} 元</el-descriptions-item>
+          <el-descriptions-item label="金额">{{ formatYuan(order.amount) }} 元</el-descriptions-item>
         </el-descriptions>
         <div class="actions">
           <el-button type="primary" @click="router.push('/orders')">查看我的订单</el-button>
@@ -32,6 +32,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getMyOrder } from '../../api/order'
+import { formatYuan } from '../../utils/money'
 
 const route = useRoute()
 const router = useRouter()

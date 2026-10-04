@@ -17,7 +17,7 @@
             </div>
             <div class="line">房型：{{ order.roomTypeName }}</div>
             <div class="line">入住/离店：{{ order.checkinDate }} ~ {{ order.checkoutDate }}</div>
-            <div class="line amount">金额：{{ order.amount }} 元</div>
+            <div class="line amount">金额：{{ formatYuan(order.amount) }} 元</div>
           </div>
           <div class="actions">
             <el-button @click="router.push(`/orders/${order.orderNo}`)">查看详情</el-button>
@@ -33,6 +33,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import GuestNav from './GuestNav.vue'
 import { listMyOrders, ORDER_STATUS } from '../../api/order'
+import { formatYuan } from '../../utils/money'
 
 const router = useRouter()
 const orders = ref([])

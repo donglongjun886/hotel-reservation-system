@@ -15,7 +15,7 @@
         <el-descriptions-item label="住客姓名">{{ order.guestName }}</el-descriptions-item>
         <el-descriptions-item label="手机号">{{ order.guestPhone }}</el-descriptions-item>
         <el-descriptions-item label="金额">
-          <span class="amount">{{ order.amount }} 元</span>
+          <span class="amount">{{ formatYuan(order.amount) }} 元</span>
         </el-descriptions-item>
         <el-descriptions-item label="下单时间">{{ createdAt }}</el-descriptions-item>
         <el-descriptions-item v-if="order.roomNo" label="房间号" :span="2">{{ order.roomNo }}</el-descriptions-item>
@@ -37,6 +37,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import GuestNav from './GuestNav.vue'
 import { getMyOrder, cancelOrder, ORDER_STATUS } from '../../api/order'
+import { formatYuan } from '../../utils/money'
 
 const route = useRoute()
 const router = useRouter()

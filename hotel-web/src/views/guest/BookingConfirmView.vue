@@ -6,13 +6,13 @@
         <template #header>订单信息</template>
         <el-descriptions :column="2" border>
           <el-descriptions-item label="房型">{{ roomType.name }}</el-descriptions-item>
-          <el-descriptions-item label="单价">{{ roomType.price }} 元/晚</el-descriptions-item>
+          <el-descriptions-item label="单价">{{ formatYuan(roomType.price) }} 元/晚</el-descriptions-item>
           <el-descriptions-item label="入住日期">{{ checkin }}</el-descriptions-item>
           <el-descriptions-item label="离店日期">{{ checkout }}</el-descriptions-item>
           <el-descriptions-item label="晚数">{{ nights }} 晚</el-descriptions-item>
           <el-descriptions-item label="支付方式">到店支付</el-descriptions-item>
           <el-descriptions-item label="合计金额" :span="2">
-            <span class="amount">{{ total }} 元</span>
+            <span class="amount">{{ formatYuan(totalFen) }} 元</span>
           </el-descriptions-item>
         </el-descriptions>
       </el-card>
@@ -44,6 +44,7 @@ import GuestNav from './GuestNav.vue'
 import { getRoomType } from '../../api/room'
 import { createOrder } from '../../api/order'
 import { session } from '../../stores/session'
+import { formatYuan } from '../../utils/money'
 import { daysBetween } from '../../utils/date'
 
 const route = useRoute()
@@ -64,7 +65,10 @@ onMounted(async () => {
 })
 
 const nights = computed(() => daysBetween(checkin, checkout))
-const total = computed(() => (roomType.value ? roomType.value.price * nights.value : 0))
+// 单价为"分"整数，整数乘法无精度问题；仅在模板渲染处格式化
+const totalFen = computed(() => (roomType.value ? roomType.value.price * nights.value : 0))
+// 幂等请求号：进入本页生成一次，双击/网络重试提交同一 requestNo，服务端据此去重
+const requestNo = crypto.randomUUID()
 
 async function submit() {
   errors.guestName = form.guestName && form.guestName.trim() ? '' : '请输入住客姓名'
@@ -73,6 +77,7 @@ async function submit() {
   submitting.value = true
   try {
     const order = await createOrder({
+      requestNo,
       roomTypeId: Number(route.query.roomTypeId),
       checkinDate: checkin,
       checkoutDate: checkout,

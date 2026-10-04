@@ -27,6 +27,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -247,6 +248,7 @@ class OrderConcurrencyTest {
 
     private CreateOrderRequest buildRequest(LocalDate checkin, LocalDate checkout) {
         CreateOrderRequest request = new CreateOrderRequest();
+        request.setRequestNo(UUID.randomUUID().toString());
         request.setRoomTypeId(TYPE_ID);
         request.setCheckinDate(checkin);
         request.setCheckoutDate(checkout);

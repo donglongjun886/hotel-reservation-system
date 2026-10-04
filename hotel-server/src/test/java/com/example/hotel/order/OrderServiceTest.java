@@ -30,6 +30,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
@@ -120,6 +121,38 @@ class OrderServiceTest {
         assertEquals("李四", stored.getGuestName());
         assertEquals("13700002222", stored.getGuestPhone());
         assertEquals(user.id(), stored.getUserId());
+    }
+
+    @Test
+    void create_sameRequestNo_replayReturnsSameOrder() {
+        // TC-B14：同一 request_no 重复提交（双击/网络重试）返回首次订单，不重复下单、不重复占库存
+        LoginUser user = newGuest();
+        LocalDate checkin = LocalDate.of(2099, 7, 10);
+        LocalDate checkout = LocalDate.of(2099, 7, 12);
+        CreateOrderRequest request = buildRequest(checkin, checkout);
+
+        OrderInfo first = createOrder(user, request);
+        OrderInfo replay = createOrder(user, request);
+
+        assertEquals(first.getOrderNo(), replay.getOrderNo());
+        assertEquals(1, orderMapper.selectCount(new QueryWrapper<HotelOrder>().eq("user_id", user.id())));
+        assertEquals(List.of(1, 1), occupiedCounts(checkin, checkout));
+    }
+
+    @Test
+    void create_blankRequestNo_rejected() {
+        // TC-B14：request_no 缺失直接拒绝，不生成订单、不占库存
+        LoginUser user = newGuest();
+        LocalDate checkin = LocalDate.of(2099, 7, 20);
+        LocalDate checkout = LocalDate.of(2099, 7, 21);
+        CreateOrderRequest request = buildRequest(checkin, checkout);
+        request.setRequestNo("  ");
+
+        BizException e = assertThrows(BizException.class, () -> createOrder(user, request));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), e.getCode());
+        assertEquals("请求号不能为空", e.getMessage());
+        assertEquals(0, orderMapper.selectCount(new QueryWrapper<HotelOrder>().eq("user_id", user.id())));
     }
 
     @Test
@@ -311,6 +344,7 @@ class OrderServiceTest {
 
     private CreateOrderRequest buildRequest(LocalDate checkin, LocalDate checkout) {
         CreateOrderRequest request = new CreateOrderRequest();
+        request.setRequestNo(UUID.randomUUID().toString());
         request.setRoomTypeId(TYPE_ID);
         request.setCheckinDate(checkin);
         request.setCheckoutDate(checkout);

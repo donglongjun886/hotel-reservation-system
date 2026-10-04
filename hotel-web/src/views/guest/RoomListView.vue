@@ -20,7 +20,7 @@
                 {{ remaining(type) > 0 ? '可订' : '已订满' }}
               </el-tag>
             </div>
-            <div class="price">{{ type.price }} 元/晚</div>
+            <div class="price">{{ formatYuan(type.price) }} 元/晚</div>
             <div class="desc">{{ type.description }}</div>
             <div class="remain">剩余可订数量：{{ remaining(type) }}</div>
           </div>
@@ -40,6 +40,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import GuestNav from './GuestNav.vue'
 import { listRoomTypes, queryAvailability } from '../../api/room'
+import { formatYuan } from '../../utils/money'
 import { today, tomorrow } from '../../utils/date'
 
 const router = useRouter()

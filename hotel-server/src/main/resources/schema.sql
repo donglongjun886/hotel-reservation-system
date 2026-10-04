@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS `room` (
 CREATE TABLE IF NOT EXISTS `hotel_order` (
   `id`            BIGINT        NOT NULL AUTO_INCREMENT,
   `order_no`      VARCHAR(32)   NOT NULL COMMENT 'HR+yyyyMMdd-NNNN',
+  `request_no`    VARCHAR(64)   NOT NULL COMMENT '客户端幂等请求号，重复提交返回首次订单',
   `user_id`       BIGINT        NOT NULL COMMENT '下单账号',
   `guest_name`    VARCHAR(32)   NOT NULL COMMENT '住客姓名（支持代订）',
   `guest_phone`   VARCHAR(16)   NOT NULL COMMENT '住客手机号',
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS `hotel_order` (
   `active_room_id` BIGINT GENERATED ALWAYS AS (IF(`status`='CHECKED_IN', `room_id`, NULL)) VIRTUAL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_order_order_no` (`order_no`),
+  UNIQUE KEY `uk_order_request_no` (`request_no`),
   UNIQUE KEY `uk_order_active_room` (`active_room_id`),
   KEY `idx_order_user` (`user_id`),
   KEY `idx_order_guest_phone` (`guest_phone`)

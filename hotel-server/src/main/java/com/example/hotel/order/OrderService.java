@@ -8,6 +8,7 @@ import com.example.hotel.common.exception.BizException;
 import com.example.hotel.common.util.Validators;
 import com.example.hotel.inventory.InventoryService;
 import com.example.hotel.order.dto.AssignableRoomInfo;
+import com.example.hotel.order.dto.CheckInPrecheckInfo;
 import com.example.hotel.order.dto.CheckInRequest;
 import com.example.hotel.order.dto.CreateOrderRequest;
 import com.example.hotel.order.dto.OrderInfo;
@@ -17,12 +18,15 @@ import com.example.hotel.order.mapper.OrderMapper;
 import com.example.hotel.room.RoomService;
 import com.example.hotel.room.entity.Room;
 import com.example.hotel.room.entity.RoomType;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -46,11 +50,19 @@ public class OrderService {
     /**
      * 创建预订：BR-01 业务规则先校验后占用；金额下单时固化（单价 × 晚数，BR-03）；
      * 一个事务内生成订单号 → 逐日占用库存（中途订满整单回滚）→ 插单。
+     * 幂等：同一 request_no 重复提交/重试返回首次创建的订单，不重复占库存；
+     * 先查兜底并发，唯一索引 uk_order_request_no 兜底并发下的重复插入。
      */
     @Transactional
     public OrderInfo create(CreateOrderRequest request) {
         LoginUser user = UserContext.require();
         validateBookingRules(request);
+        HotelOrder replay = orderMapper.selectOne(new QueryWrapper<HotelOrder>()
+                .eq("request_no", request.getRequestNo())
+                .eq("user_id", user.id()));
+        if (replay != null) {
+            return OrderInfo.from(replay, roomService.getRoomType(replay.getRoomTypeId()).getName());
+        }
         RoomType roomType = roomService.getRoomType(request.getRoomTypeId());
         int nights = (int) ChronoUnit.DAYS.between(request.getCheckinDate(), request.getCheckoutDate());
         BigDecimal amount = roomType.getPrice().multiply(BigDecimal.valueOf(nights));
@@ -60,6 +72,7 @@ public class OrderService {
 
         HotelOrder order = new HotelOrder();
         order.setOrderNo(orderNo);
+        order.setRequestNo(request.getRequestNo());
         order.setUserId(user.id());
         order.setGuestName(request.getGuestName().trim());
         order.setGuestPhone(request.getGuestPhone());
@@ -69,7 +82,16 @@ public class OrderService {
         order.setNights(nights);
         order.setAmount(amount);
         order.setStatus(OrderStatus.CONFIRMED);
-        orderMapper.insert(order);
+        try {
+            orderMapper.insert(order);
+        } catch (DuplicateKeyException e) {
+            // 并发重复提交撞上唯一索引：回滚本事务已占的库存与序号，改查首次创建的订单返回
+            HotelOrder first = rollbackAndFindByRequestNo(request.getRequestNo(), user.id());
+            if (first == null) {
+                throw e;
+            }
+            return OrderInfo.from(first, roomService.getRoomType(first.getRoomTypeId()).getName());
+        }
         return OrderInfo.from(order, roomType.getName());
     }
 
@@ -135,6 +157,13 @@ public class OrderService {
                 .toList();
     }
 
+    /** 入住预检（原型 P-A3）：打开详情页即展示"可办理/不可办理及原因"，与 checkIn 共用同一套阻断原因 */
+    public CheckInPrecheckInfo checkInPrecheck(String orderNo) {
+        HotelOrder order = findByOrderNo(orderNo);
+        List<String> reasons = checkInBlockingReasons(order);
+        return new CheckInPrecheckInfo(reasons.isEmpty(), reasons);
+    }
+
     /**
      * 办理入住（BR-06，技术方案 §5.3）：四项校验 → 房间行锁 → 锁内复查无在住订单（当前读）
      * → 带源状态条件更新。并发分配同一房间在行锁处串行化，后到者复查时拒绝；
@@ -169,18 +198,11 @@ public class OrderService {
         inventoryService.release(order.getRoomTypeId(), order.getCheckinDate(), order.getCheckoutDate());
     }
 
-    /** BR-06 入住校验：状态、入住窗口（入住日 ≤ 今天 < 离店日）、身份证格式、有空闲房间，文案对齐原型 P-A3 */
+    /** BR-06 入住校验：阻断原因（状态/窗口/空房）→ 入参校验（身份证、房间），文案对齐原型 P-A3 */
     private void validateCheckInRules(HotelOrder order, CheckInRequest request) {
-        if (order.getStatus() != OrderStatus.CONFIRMED) {
-            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "该订单当前状态不可办理入住");
-        }
-        LocalDate today = LocalDate.now();
-        if (today.isBefore(order.getCheckinDate())) {
-            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "未到入住日期（入住日：" + order.getCheckinDate() + "）");
-        }
-        if (!today.isBefore(order.getCheckoutDate())) {
-            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED,
-                    "已超过可入住时间（离店日：" + order.getCheckoutDate() + "），请引导客人取消重订");
+        List<String> blocking = checkInBlockingReasons(order);
+        if (!blocking.isEmpty()) {
+            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, blocking.get(0));
         }
         if (request == null || !Validators.isIdCard(request.getIdCard())) {
             throw new BizException(ErrorCode.PARAM_INVALID, "身份证号格式不正确");
@@ -188,9 +210,25 @@ public class OrderService {
         if (request.getRoomNo() == null || request.getRoomNo().isBlank()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "请选择要分配的房间");
         }
-        if (roomService.listAssignableRooms(order.getRoomTypeId()).isEmpty()) {
-            throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "该房型当前无空闲房间");
+    }
+
+    /** 订单侧的入住阻断原因（状态、入住窗口、空房），办理入住与预检共用；状态不符时其余判断无意义，直接短路 */
+    private List<String> checkInBlockingReasons(HotelOrder order) {
+        if (order.getStatus() != OrderStatus.CONFIRMED) {
+            return List.of("该订单当前状态不可办理入住");
         }
+        List<String> reasons = new ArrayList<>();
+        LocalDate today = LocalDate.now();
+        if (today.isBefore(order.getCheckinDate())) {
+            reasons.add("未到入住日期（入住日：" + order.getCheckinDate() + "）");
+        }
+        if (!today.isBefore(order.getCheckoutDate())) {
+            reasons.add("已超过可入住时间（离店日：" + order.getCheckoutDate() + "），请引导客人取消重订");
+        }
+        if (roomService.listAssignableRooms(order.getRoomTypeId()).isEmpty()) {
+            reasons.add("该房型当前无空闲房间");
+        }
+        return reasons;
     }
 
     private HotelOrder findMine(String orderNo) {
@@ -212,12 +250,23 @@ public class OrderService {
         return order;
     }
 
+    /** 标记当前事务回滚（撤销已占库存与序号）后按幂等号查单，用于并发重复提交撞上唯一索引的场景 */
+    private HotelOrder rollbackAndFindByRequestNo(String requestNo, Long userId) {
+        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        return orderMapper.selectOne(new QueryWrapper<HotelOrder>()
+                .eq("request_no", requestNo)
+                .eq("user_id", userId));
+    }
+
     private String resolveRoomNo(HotelOrder order) {
         return order.getRoomId() != null ? roomService.getRoom(order.getRoomId()).getRoomNo() : null;
     }
 
     /** BR-01 预订规则：校验失败直接拒绝，不进入库存占用环节 */
     private void validateBookingRules(CreateOrderRequest request) {
+        if (request.getRequestNo() == null || request.getRequestNo().isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请求号不能为空");
+        }
         if (request.getRoomTypeId() == null || request.getCheckinDate() == null || request.getCheckoutDate() == null) {
             throw new BizException(ErrorCode.PARAM_INVALID, "请选择入住和离店日期");
         }

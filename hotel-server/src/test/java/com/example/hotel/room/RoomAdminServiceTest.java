@@ -32,6 +32,7 @@ import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -242,6 +243,7 @@ class RoomAdminServiceTest {
 
     private void createOrder(LoginUser user, LocalDate checkin, LocalDate checkout) {
         CreateOrderRequest request = new CreateOrderRequest();
+        request.setRequestNo(UUID.randomUUID().toString());
         request.setRoomTypeId(TYPE_A);
         request.setCheckinDate(checkin);
         request.setCheckoutDate(checkout);
