@@ -13,6 +13,7 @@ import com.example.hotel.common.api.ErrorCode;
 import com.example.hotel.common.context.LoginUser;
 import com.example.hotel.common.context.UserContext;
 import com.example.hotel.common.exception.BizException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -42,7 +43,12 @@ public class AuthService {
         user.setLoginName(request.getPhone());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setRole(LoginUser.ROLE_GUEST);
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException e) {
+            // 并发注册同一手机号撞唯一索引：文案与先查一致（原型 P-C4）
+            throw new BizException(ErrorCode.PHONE_REGISTERED);
+        }
     }
 
     public LoginResponse login(LoginRequest request) {

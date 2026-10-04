@@ -16,6 +16,7 @@ import com.example.hotel.inventory.entity.DailyInventory;
 import com.example.hotel.inventory.mapper.InventoryMapper;
 import com.example.hotel.order.OrderService;
 import com.example.hotel.order.dto.CreateOrderRequest;
+import com.example.hotel.order.dto.OrderInfo;
 import com.example.hotel.order.entity.HotelOrder;
 import com.example.hotel.order.mapper.OrderMapper;
 import com.example.hotel.room.entity.Room;
@@ -41,9 +42,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 对应测试用例：TC-F03~F08（房型/房间维护，UC-09）。
+ * 对应测试用例：TC-F03~F09（房型/房间维护，UC-09）。
  * 大床房 room_type_id=1（3 间）、双床房 room_type_id=2（3 间）、行政套房 room_type_id=4（2 间）。
- * 改挂用例在 cleanup 中恢复预置数据（A103 挂回大床房并触发库存 total 再同步）。
+ * 改挂用例在 cleanup 中恢复预置数据（A101/A103 挂回大床房并触发库存 total 再同步）。
  */
 @SpringBootTest
 class RoomAdminServiceTest {
@@ -93,10 +94,12 @@ class RoomAdminServiceTest {
             userMapper.delete(new QueryWrapper<User>().in("id", createdUserIds));
             createdUserIds.clear();
         }
-        // 恢复预置数据：A103 若被改挂则挂回大床房（updateRoom 会触发双方库存 total 再同步）
-        Room a103 = roomMapper.selectOne(new QueryWrapper<Room>().eq("room_no", "A103"));
-        if (a103 != null && !TYPE_A.equals(a103.getRoomTypeId())) {
-            roomService.updateRoom(a103.getId(), "A103", TYPE_A);
+        // 恢复预置数据：A101/A103 若被改挂则挂回大床房（updateRoom 会触发双方库存 total 再同步）
+        for (String roomNo : List.of("A101", "A103")) {
+            Room preset = roomMapper.selectOne(new QueryWrapper<Room>().eq("room_no", roomNo));
+            if (preset != null && !TYPE_A.equals(preset.getRoomTypeId())) {
+                roomService.updateRoom(preset.getId(), roomNo, TYPE_A);
+            }
         }
         if (!createdRoomIds.isEmpty()) {
             roomMapper.delete(new QueryWrapper<Room>().in("id", createdRoomIds));
@@ -225,6 +228,26 @@ class RoomAdminServiceTest {
         assertEquals(4, inventoryService.queryAvailability(TYPE_B, today.plusDays(100), today.plusDays(101)));
     }
 
+    @Test
+    void reassignRoom_occupiedRoom_rejected() {
+        // TC-F09：在住房间禁止改挂其他房型（避免订单房型与房间当前房型脱节）；退房后可正常改挂
+        LoginUser user = newGuest();
+        LocalDate today = LocalDate.now();
+        OrderInfo order = createOrder(user, today, today.plusDays(2));
+        Room a101 = findRoom("A101");
+        jdbc.update("UPDATE hotel_order SET status = 'CHECKED_IN', room_id = ? WHERE order_no = ?",
+                a101.getId(), order.getOrderNo());
+
+        BizException e = assertThrows(BizException.class, () -> roomService.updateRoom(a101.getId(), "A101", TYPE_B));
+
+        assertEquals("该房间正在入住中，不可调整", e.getMessage());
+        assertEquals(TYPE_A, findRoom("A101").getRoomTypeId());
+
+        jdbc.update("UPDATE hotel_order SET status = 'COMPLETED' WHERE order_no = ?", order.getOrderNo());
+        roomService.updateRoom(a101.getId(), "A101", TYPE_B);
+        assertEquals(TYPE_B, findRoom("A101").getRoomTypeId());
+    }
+
     // ---------- 测试辅助 ----------
 
     private LoginUser newGuest() {
@@ -241,7 +264,7 @@ class RoomAdminServiceTest {
         return user;
     }
 
-    private void createOrder(LoginUser user, LocalDate checkin, LocalDate checkout) {
+    private OrderInfo createOrder(LoginUser user, LocalDate checkin, LocalDate checkout) {
         CreateOrderRequest request = new CreateOrderRequest();
         request.setRequestNo(UUID.randomUUID().toString());
         request.setRoomTypeId(TYPE_A);
@@ -251,7 +274,7 @@ class RoomAdminServiceTest {
         request.setGuestPhone("13800001111");
         UserContext.set(user);
         try {
-            orderService.create(request);
+            return orderService.create(request);
         } finally {
             UserContext.clear();
         }

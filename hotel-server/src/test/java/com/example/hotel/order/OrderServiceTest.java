@@ -9,6 +9,7 @@ import com.example.hotel.auth.entity.User;
 import com.example.hotel.auth.mapper.AuthTokenMapper;
 import com.example.hotel.auth.mapper.UserMapper;
 import com.example.hotel.common.api.ErrorCode;
+import com.example.hotel.common.api.PageResult;
 import com.example.hotel.common.context.LoginUser;
 import com.example.hotel.common.context.UserContext;
 import com.example.hotel.common.exception.BizException;
@@ -153,6 +154,46 @@ class OrderServiceTest {
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), e.getCode());
         assertEquals("请求号不能为空", e.getMessage());
         assertEquals(0, orderMapper.selectCount(new QueryWrapper<HotelOrder>().eq("user_id", user.id())));
+    }
+
+    @Test
+    void create_adminRole_forbidden() {
+        // PRD §2.2 权限矩阵：创建预订仅住客可用（代订也是住客账号下单），前台账号调接口一律拒绝
+        LoginUser admin = new LoginUser(1L, "admin", LoginUser.ROLE_ADMIN);
+        CreateOrderRequest request = buildRequest(LocalDate.of(2099, 9, 1), LocalDate.of(2099, 9, 2));
+        UserContext.set(admin);
+        try {
+            BizException e = assertThrows(BizException.class, () -> orderService.create(request));
+            assertEquals(403, e.getCode());
+            assertEquals("前台账号不可创建预订", e.getMessage());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void listMine_pagination() {
+        // TC-D11：我的订单分页——每页 10 条，第二页返回剩余条目，total 为全部条数
+        LoginUser user = newGuest();
+        for (int i = 0; i < 12; i++) {
+            LocalDate checkin = LocalDate.of(2099, 8, 1).plusDays(i * 2L);
+            createOrder(user, checkin, checkin.plusDays(1));
+        }
+
+        UserContext.set(user);
+        try {
+            PageResult<OrderInfo> page1 = orderService.listMine(1, 10);
+            assertEquals(12, page1.getTotal());
+            assertEquals(10, page1.getList().size());
+            assertEquals(1, page1.getPage());
+            assertEquals(10, page1.getPageSize());
+
+            PageResult<OrderInfo> page2 = orderService.listMine(2, 10);
+            assertEquals(12, page2.getTotal());
+            assertEquals(2, page2.getList().size());
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test
@@ -315,9 +356,10 @@ class OrderServiceTest {
         OrderInfo second = createOrder(owner, LocalDate.of(2099, 6, 22), LocalDate.of(2099, 6, 23));
         createOrder(other, LocalDate.of(2099, 6, 24), LocalDate.of(2099, 6, 25));
 
-        List<OrderInfo> mine = listMine(owner);
-        assertEquals(2, mine.size());
-        assertTrue(mine.stream().allMatch(o -> findByOrderNo(o.getOrderNo()).getUserId().equals(owner.id())));
+        PageResult<OrderInfo> mine = listMine(owner);
+        assertEquals(2, mine.getTotal());
+        assertEquals(2, mine.getList().size());
+        assertTrue(mine.getList().stream().allMatch(o -> findByOrderNo(o.getOrderNo()).getUserId().equals(owner.id())));
 
         BizException e = assertThrows(BizException.class, () -> detail(other, first.getOrderNo()));
         assertEquals(ErrorCode.NOT_FOUND.getCode(), e.getCode());
@@ -366,10 +408,10 @@ class OrderServiceTest {
         }
     }
 
-    private List<OrderInfo> listMine(LoginUser user) {
+    private PageResult<OrderInfo> listMine(LoginUser user) {
         UserContext.set(user);
         try {
-            return orderService.listMine();
+            return orderService.listMine(1, 10);
         } finally {
             UserContext.clear();
         }

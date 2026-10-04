@@ -9,6 +9,7 @@ import com.example.hotel.auth.entity.User;
 import com.example.hotel.auth.mapper.AuthTokenMapper;
 import com.example.hotel.auth.mapper.UserMapper;
 import com.example.hotel.common.api.ErrorCode;
+import com.example.hotel.common.api.PageResult;
 import com.example.hotel.common.context.LoginUser;
 import com.example.hotel.common.context.UserContext;
 import com.example.hotel.common.exception.BizException;
@@ -114,17 +115,17 @@ class OrderAdminServiceTest {
         OrderInfo order = createOrder(user, "李四", "13900000003",
                 LocalDate.of(2099, 2, 10), LocalDate.of(2099, 2, 11));
 
-        List<OrderInfo> byOrderNo = orderService.listForAdmin(order.getOrderNo());
-        assertEquals(1, byOrderNo.size());
-        assertEquals(order.getOrderNo(), byOrderNo.get(0).getOrderNo());
+        PageResult<OrderInfo> byOrderNo = orderService.listForAdmin(order.getOrderNo(), 1, 10);
+        assertEquals(1, byOrderNo.getTotal());
+        assertEquals(order.getOrderNo(), byOrderNo.getList().get(0).getOrderNo());
 
-        List<OrderInfo> byPhone = orderService.listForAdmin("13900000003");
-        assertTrue(byPhone.stream().anyMatch(o -> o.getOrderNo().equals(order.getOrderNo())));
+        PageResult<OrderInfo> byPhone = orderService.listForAdmin("13900000003", 1, 10);
+        assertTrue(byPhone.getList().stream().anyMatch(o -> o.getOrderNo().equals(order.getOrderNo())));
 
-        List<OrderInfo> all = orderService.listForAdmin("  ");
-        assertTrue(all.stream().anyMatch(o -> o.getOrderNo().equals(order.getOrderNo())));
+        PageResult<OrderInfo> all = orderService.listForAdmin("  ", 1, 10);
+        assertTrue(all.getList().stream().anyMatch(o -> o.getOrderNo().equals(order.getOrderNo())));
 
-        assertTrue(orderService.listForAdmin("HR00000000-9999").isEmpty());
+        assertTrue(orderService.listForAdmin("HR00000000-9999", 1, 10).getList().isEmpty());
     }
 
     @Test
@@ -148,6 +149,25 @@ class OrderAdminServiceTest {
         List<String> assignable = assignableRoomNos(order.getOrderNo());
         assertEquals(2, assignable.size());
         assertTrue(assignable.containsAll(List.of(ROOM_A102, ROOM_A103)));
+    }
+
+    @Test
+    void detailMine_excludesIdCard_adminDetailKeepsIt() {
+        // P-C8 住客详情：已入住后追加房间号但不含身份证号；P-A3 前台详情可见身份证号
+        LoginUser user = newGuest();
+        LocalDate today = LocalDate.now();
+        OrderInfo order = createOrder(user, today, today.plusDays(1));
+        checkIn(order.getOrderNo(), ID_CARD, ROOM_A101);
+
+        UserContext.set(user);
+        try {
+            OrderInfo mine = orderService.detailMine(order.getOrderNo());
+            assertEquals(ROOM_A101, mine.getRoomNo());
+            assertNull(mine.getIdCard());
+        } finally {
+            UserContext.clear();
+        }
+        assertEquals(ID_CARD, orderService.detailForAdmin(order.getOrderNo()).getIdCard());
     }
 
     @Test

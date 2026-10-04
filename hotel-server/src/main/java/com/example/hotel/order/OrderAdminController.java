@@ -1,6 +1,10 @@
 package com.example.hotel.order;
 
+import com.example.hotel.common.api.ErrorCode;
+import com.example.hotel.common.api.PageResult;
 import com.example.hotel.common.api.Result;
+import com.example.hotel.common.exception.BizException;
+import com.example.hotel.common.util.Validators;
 import com.example.hotel.order.dto.AssignableRoomInfo;
 import com.example.hotel.order.dto.CheckInPrecheckInfo;
 import com.example.hotel.order.dto.CheckInRequest;
@@ -27,8 +31,13 @@ public class OrderAdminController {
     }
 
     @GetMapping
-    public Result<List<OrderInfo>> list(@RequestParam(required = false) String keyword) {
-        return Result.ok(orderService.listForAdmin(keyword));
+    public Result<PageResult<OrderInfo>> list(@RequestParam(required = false) String keyword,
+                                              @RequestParam(defaultValue = "1") int page,
+                                              @RequestParam(defaultValue = "10") int pageSize) {
+        if (!Validators.isValidPage(page, pageSize)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "分页参数不正确");
+        }
+        return Result.ok(orderService.listForAdmin(keyword, page, pageSize));
     }
 
     @GetMapping("/{orderNo}")

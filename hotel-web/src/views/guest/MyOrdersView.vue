@@ -24,6 +24,16 @@
           </div>
         </div>
       </el-card>
+
+      <el-pagination
+        v-if="total > pageSize"
+        class="pager"
+        layout="prev, pager, next, total"
+        :total="total"
+        :page-size="pageSize"
+        :current-page="page"
+        @current-change="load"
+      />
     </div>
   </div>
 </template>
@@ -38,11 +48,19 @@ import { formatYuan } from '../../utils/money'
 const router = useRouter()
 const orders = ref([])
 const loaded = ref(false)
+const page = ref(1)
+const pageSize = 10
+const total = ref(0)
 
-onMounted(async () => {
-  orders.value = await listMyOrders()
+onMounted(() => load(1))
+
+async function load(p) {
+  const result = await listMyOrders(p, pageSize)
+  orders.value = result.list
+  total.value = result.total
+  page.value = result.page
   loaded.value = true
-})
+}
 
 function statusOf(order) {
   return ORDER_STATUS[order.status] || { text: order.status, type: 'info' }
@@ -84,5 +102,10 @@ function statusOf(order) {
 
 .amount {
   color: #f56c6c;
+}
+
+.pager {
+  margin-top: 16px;
+  justify-content: center;
 }
 </style>

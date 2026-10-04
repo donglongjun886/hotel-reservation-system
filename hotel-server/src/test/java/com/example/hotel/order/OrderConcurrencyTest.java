@@ -19,6 +19,9 @@ import com.example.hotel.order.dto.CreateOrderRequest;
 import com.example.hotel.order.entity.HotelOrder;
 import com.example.hotel.order.entity.OrderStatus;
 import com.example.hotel.order.mapper.OrderMapper;
+import com.example.hotel.room.RoomService;
+import com.example.hotel.room.entity.Room;
+import com.example.hotel.room.mapper.RoomMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OrderConcurrencyTest {
 
     private static final Long TYPE_ID = 1L;
+    private static final Long TARGET_TYPE_ID = 2L; // 双床房，TC-G08 改挂目标
     private static final int TOTAL_ROOMS = 3;
     private static final LocalDate FAR_FUTURE = LocalDate.of(2099, 1, 1);
     private static final Pattern ORDER_NO = Pattern.compile("HR\\d{8}-\\d{4,}");
@@ -68,6 +72,10 @@ class OrderConcurrencyTest {
     private UserMapper userMapper;
     @Autowired
     private AuthTokenMapper authTokenMapper;
+    @Autowired
+    private RoomService roomService;
+    @Autowired
+    private RoomMapper roomMapper;
 
     private final List<Long> createdUserIds = new CopyOnWriteArrayList<>();
 
@@ -196,6 +204,65 @@ class OrderConcurrencyTest {
         for (DailyInventory row : rows) {
             assertEquals(activeOrders + 1, (long) row.getOccupiedCount());
             assertTrue(row.getOccupiedCount() >= 0 && row.getOccupiedCount() <= row.getTotalCount());
+        }
+    }
+
+    @Test
+    void reassignRoom_concurrentWithBooking_neverOversells() throws InterruptedException {
+        // TC-G08：减容维护（A103 改挂使大床房 3→2 间）与并发下单交叉——维护的条件更新
+        // （occupied ≤ 新 total）与下单的条件更新在同一批行锁上串行，恰一方成功，occupied ≤ total 恒成立
+        LocalDate checkin = LocalDate.of(2099, 9, 10);
+        LocalDate checkout = LocalDate.of(2099, 9, 11);
+        // 先造 2 笔有效订单（占 2/3），维护预检"新房间数 2 ≥ 有效订单 2"可通过
+        for (int i = 0; i < TOTAL_ROOMS - 1; i++) {
+            LoginUser user = newGuest();
+            UserContext.set(user);
+            try {
+                orderService.create(buildRequest(checkin, checkout));
+            } finally {
+                UserContext.clear();
+            }
+        }
+        Room a103 = roomMapper.selectOne(new QueryWrapper<Room>().eq("room_no", "A103"));
+        LoginUser booker = newGuest();
+        AtomicInteger maintenanceSuccess = new AtomicInteger();
+        AtomicInteger bookingSuccess = new AtomicInteger();
+        List<Throwable> unexpected = new CopyOnWriteArrayList<>();
+
+        try {
+            runConcurrently(2, i -> {
+                if (i == 0) {
+                    try {
+                        roomService.updateRoom(a103.getId(), "A103", TARGET_TYPE_ID);
+                        maintenanceSuccess.incrementAndGet();
+                    } catch (BizException e) {
+                        assertEquals("该房型存在有效订单，请先处理相关订单", e.getMessage());
+                    }
+                } else {
+                    UserContext.set(booker);
+                    try {
+                        orderService.create(buildRequest(checkin, checkout));
+                        bookingSuccess.incrementAndGet();
+                    } catch (BizException e) {
+                        assertEquals(ErrorCode.SOLD_OUT.getCode(), e.getCode());
+                    } finally {
+                        UserContext.clear();
+                    }
+                }
+            }, unexpected);
+
+            assertTrue(unexpected.isEmpty(), () -> "未知异常: " + unexpected);
+            assertEquals(1, maintenanceSuccess.get() + bookingSuccess.get(),
+                    () -> "维护成功 " + maintenanceSuccess.get() + " + 下单成功 " + bookingSuccess.get() + " 应恰为 1");
+            DailyInventory row = selectRows(checkin, checkout).get(0);
+            assertTrue(row.getOccupiedCount() <= row.getTotalCount(),
+                    () -> "occupied=" + row.getOccupiedCount() + " 超过 total=" + row.getTotalCount());
+        } finally {
+            // 恢复预置数据：A103 若已改挂则挂回大床房（updateRoom 触发双方库存 total 再同步）
+            Room after = roomMapper.selectOne(new QueryWrapper<Room>().eq("room_no", "A103"));
+            if (!TYPE_ID.equals(after.getRoomTypeId())) {
+                roomService.updateRoom(after.getId(), "A103", TYPE_ID);
+            }
         }
     }
 

@@ -25,4 +25,8 @@ public interface RoomMapper extends BaseMapper<Room> {
     /** 该房型当前有效订单数（已确认 + 已入住），UC-09 维护约束用 */
     @Select("SELECT COUNT(*) FROM hotel_order WHERE room_type_id = #{typeId} AND status IN ('CONFIRMED', 'CHECKED_IN')")
     int countActiveOrders(@Param("typeId") Long typeId);
+
+    /** 该房间的在住订单数（UC-09：在住房间禁止改挂其他房型） */
+    @Select("SELECT COUNT(*) FROM hotel_order WHERE room_id = #{roomId} AND status = 'CHECKED_IN'")
+    int countCheckedInByRoomId(@Param("roomId") Long roomId);
 }

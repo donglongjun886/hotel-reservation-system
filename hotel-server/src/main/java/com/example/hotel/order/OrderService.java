@@ -2,6 +2,7 @@ package com.example.hotel.order;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.example.hotel.common.api.ErrorCode;
+import com.example.hotel.common.api.PageResult;
 import com.example.hotel.common.context.LoginUser;
 import com.example.hotel.common.context.UserContext;
 import com.example.hotel.common.exception.BizException;
@@ -38,13 +39,16 @@ public class OrderService {
     private final OrderNoGenerator orderNoGenerator;
     private final InventoryService inventoryService;
     private final RoomService roomService;
+    private final CheckedInRechecker checkedInRechecker;
 
     public OrderService(OrderMapper orderMapper, OrderNoGenerator orderNoGenerator,
-                        InventoryService inventoryService, RoomService roomService) {
+                        InventoryService inventoryService, RoomService roomService,
+                        CheckedInRechecker checkedInRechecker) {
         this.orderMapper = orderMapper;
         this.orderNoGenerator = orderNoGenerator;
         this.inventoryService = inventoryService;
         this.roomService = roomService;
+        this.checkedInRechecker = checkedInRechecker;
     }
 
     /**
@@ -56,6 +60,10 @@ public class OrderService {
     @Transactional
     public OrderInfo create(CreateOrderRequest request) {
         LoginUser user = UserContext.require();
+        // PRD §2.2 权限矩阵：创建预订仅住客可用（代订也是住客账号下单），前台账号一律拒绝
+        if (user.isAdmin()) {
+            throw new BizException(403, "前台账号不可创建预订");
+        }
         validateBookingRules(request);
         HotelOrder replay = orderMapper.selectOne(new QueryWrapper<HotelOrder>()
                 .eq("request_no", request.getRequestNo())
@@ -95,23 +103,19 @@ public class OrderService {
         return OrderInfo.from(order, roomType.getName());
     }
 
-    /** 我的订单：一律按 token 中的 user_id 过滤，不接受前端传 userId */
-    public List<OrderInfo> listMine() {
+    /** 我的订单（分页）：一律按 token 中的 user_id 过滤，不接受前端传 userId */
+    public PageResult<OrderInfo> listMine(int page, int pageSize) {
         LoginUser user = UserContext.require();
-        List<HotelOrder> orders = orderMapper.selectList(new QueryWrapper<HotelOrder>()
+        QueryWrapper<HotelOrder> query = new QueryWrapper<HotelOrder>()
                 .eq("user_id", user.id())
-                .orderByDesc("id"));
-        Map<Long, String> typeNames = roomService.listRoomTypes().stream()
-                .collect(Collectors.toMap(RoomType::getId, RoomType::getName));
-        return orders.stream()
-                .map(order -> OrderInfo.from(order, typeNames.get(order.getRoomTypeId())))
-                .toList();
+                .orderByDesc("id");
+        return selectPage(query, page, pageSize);
     }
 
-    /** 我的订单详情：仅本人订单可见，他人订单按不存在处理（不泄露） */
+    /** 我的订单详情：仅本人订单可见，他人订单按不存在处理（不泄露）；住客侧不含身份证号（P-C8） */
     public OrderInfo detailMine(String orderNo) {
         HotelOrder order = findMine(orderNo);
-        return OrderInfo.from(order, roomService.getRoomType(order.getRoomTypeId()).getName(), resolveRoomNo(order));
+        return OrderInfo.fromGuest(order, roomService.getRoomType(order.getRoomTypeId()).getName(), resolveRoomNo(order));
     }
 
     /** 取消：带源状态 + user_id 条件更新，成功后逐日释放库存（BR-04 宽松取消） */
@@ -127,20 +131,15 @@ public class OrderService {
 
     // ---------- 前台侧（admin） ----------
 
-    /** 前台订单查询：keyword 为空查全部，否则按订单号或订单上的住客手机号精确匹配（BR-01 代订口径） */
-    public List<OrderInfo> listForAdmin(String keyword) {
+    /** 前台订单查询（分页）：keyword 为空查全部，否则按订单号或订单上的住客手机号精确匹配（BR-01 代订口径） */
+    public PageResult<OrderInfo> listForAdmin(String keyword, int page, int pageSize) {
         QueryWrapper<HotelOrder> query = new QueryWrapper<>();
         if (keyword != null && !keyword.isBlank()) {
             String value = keyword.trim();
             query.and(q -> q.eq("order_no", value).or().eq("guest_phone", value));
         }
         query.orderByDesc("id");
-        List<HotelOrder> orders = orderMapper.selectList(query);
-        Map<Long, String> typeNames = roomService.listRoomTypes().stream()
-                .collect(Collectors.toMap(RoomType::getId, RoomType::getName));
-        return orders.stream()
-                .map(order -> OrderInfo.from(order, typeNames.get(order.getRoomTypeId())))
-                .toList();
+        return selectPage(query, page, pageSize);
     }
 
     /** 前台订单详情：不限归属，已入住订单追加房间号与身份证号 */
@@ -165,7 +164,7 @@ public class OrderService {
     }
 
     /**
-     * 办理入住（BR-06，技术方案 §5.3）：四项校验 → 房间行锁 → 锁内复查无在住订单（当前读）
+     * 办理入住（BR-06，技术方案 §5.3）：四项校验 → 房间行锁 → 独立小事务复查无在住订单（全新读视图）
      * → 带源状态条件更新。并发分配同一房间在行锁处串行化，后到者复查时拒绝；
      * 生成列唯一索引（uk_order_active_room）在 DB 层兜底。
      */
@@ -178,7 +177,7 @@ public class OrderService {
             throw new BizException(ErrorCode.PARAM_INVALID, "所选房间不属于该订单房型");
         }
         roomService.lockById(room.getId());
-        if (orderMapper.selectCheckedInIdByRoomId(room.getId()) != null) {
+        if (checkedInRechecker.isRoomOccupied(room.getId())) {
             throw new BizException(ErrorCode.CHECKIN_NOT_ALLOWED, "房间刚被分配，请刷新重选");
         }
         if (orderMapper.checkIn(orderNo, room.getId(), request.getIdCard().trim()) == 0) {
@@ -248,6 +247,20 @@ public class OrderService {
             throw new BizException(ErrorCode.NOT_FOUND, "订单不存在");
         }
         return order;
+    }
+
+    /** 物理分页：先 count 后 LIMIT 查询（page/pageSize 已由 controller 校验为合法整数，直接拼接无注入风险）；
+     *  不用 MyBatis-Plus 分页插件——3.5.9 起 PaginationInnerInterceptor 拆分到白名单外的独立依赖 */
+    private PageResult<OrderInfo> selectPage(QueryWrapper<HotelOrder> query, int page, int pageSize) {
+        long total = orderMapper.selectCount(query);
+        List<HotelOrder> records = total == 0 ? List.of()
+                : orderMapper.selectList(query.last("LIMIT " + pageSize + " OFFSET " + (long) (page - 1) * pageSize));
+        Map<Long, String> typeNames = roomService.listRoomTypes().stream()
+                .collect(Collectors.toMap(RoomType::getId, RoomType::getName));
+        List<OrderInfo> list = records.stream()
+                .map(order -> OrderInfo.from(order, typeNames.get(order.getRoomTypeId())))
+                .toList();
+        return new PageResult<>(list, total, page, pageSize);
     }
 
     /** 标记当前事务回滚（撤销已占库存与序号）后按幂等号查单，用于并发重复提交撞上唯一索引的场景 */

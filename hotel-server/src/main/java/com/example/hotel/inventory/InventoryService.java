@@ -64,16 +64,30 @@ public class InventoryService {
     }
 
     /**
-     * UC-09 房间数变更同步（决策 13）：先补建未来窗口缺失的库存行（新增房型时一行都没有），
-     * 再把 stay_date ≥ 今天 的库存行 total_count 刷成当前房间数；occupied_count 不动，历史日期行不改。
-     * REQUIRED 传播，由 room 维护接口的事务承载。
+     * UC-09 房间数变更同步（决策 13）。第一步经独立小事务为所有涉及房型补建窗口缺失行
+     * （必须先于任何库存行加锁：批量 INSERT IGNORE 的重复键检查要读已有行，
+     *  若本事务已持有库存行锁——含范围锁 bleed 到相邻房型的首行——会把独立事务堵死）；
+     * 第二步逐房型把 stay_date ≥ 今天 的库存行 total_count 刷成当前房间数，
+     * 减容由"occupied_count ≤ 新房间数"条件更新 + 加锁复查超占行兜底：与并发下单在同一批
+     * 行锁上串行，无论谁先拿到锁，"occupied ≤ total"的防超卖不变式都成立（违规即整事务回滚）。
      */
     @Transactional
-    public void syncTotalForFutureDates(Long typeId) {
+    public void syncTotalForFutureDates(Long... typeIds) {
+        for (Long typeId : typeIds) {
+            rowCreator.ensureWindowRows(typeId, inventoryMapper.countRooms(typeId));
+        }
+        for (Long typeId : typeIds) {
+            syncOneType(typeId);
+        }
+    }
+
+    private void syncOneType(Long typeId) {
         int totalRooms = inventoryMapper.countRooms(typeId);
         LocalDate today = LocalDate.now();
-        inventoryMapper.preCreate(typeId, today, today.plusDays(InventoryPreCreator.PRE_CREATE_DAYS), totalRooms);
         inventoryMapper.syncFutureTotal(typeId, today, totalRooms);
+        if (inventoryMapper.countUnsyncedRows(typeId, today, totalRooms) > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "该房型存在有效订单，请先处理相关订单");
+        }
     }
 
     private void occupyOneDate(Long typeId, LocalDate date) {

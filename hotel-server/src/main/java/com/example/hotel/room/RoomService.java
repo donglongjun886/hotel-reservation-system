@@ -9,6 +9,7 @@ import com.example.hotel.room.entity.Room;
 import com.example.hotel.room.entity.RoomType;
 import com.example.hotel.room.mapper.RoomMapper;
 import com.example.hotel.room.mapper.RoomTypeMapper;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -123,14 +124,20 @@ public class RoomService {
         Room room = new Room();
         room.setRoomNo(roomNo.trim());
         room.setRoomTypeId(roomTypeId);
-        roomMapper.insert(room);
+        try {
+            roomMapper.insert(room);
+        } catch (DuplicateKeyException e) {
+            // 并发新增撞房间号唯一索引：文案与先查一致
+            throw new BizException(ErrorCode.PARAM_INVALID, "房间号不能为空且不可重复");
+        }
         inventoryService.syncTotalForFutureDates(roomTypeId);
         return room;
     }
 
     /**
-     * 修改房间（房间号 / 所属房型）。改挂其他房型时按 UC-09 先校验
-     * "源房型新房间数 ≥ 当前有效订单数"，再落库并同步源、目标双方的未来库存行 total。
+     * 修改房间（房间号 / 所属房型）。在住房间禁止改挂（避免订单房型与房间当前房型脱节）；
+     * 改挂其他房型时按 UC-09 先校验"源房型新房间数 ≥ 当前有效订单数"，
+     * 再落库并同步源、目标双方的未来库存行 total。
      */
     @Transactional
     public Room updateRoom(Long id, String roomNo, Long roomTypeId) {
@@ -140,14 +147,22 @@ public class RoomService {
         Long oldTypeId = room.getRoomTypeId();
         boolean reAssign = !oldTypeId.equals(roomTypeId);
         if (reAssign) {
+            if (roomMapper.countCheckedInByRoomId(id) > 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "该房间正在入住中，不可调整");
+            }
             ensureRoomCountNotBelowActiveOrders(oldTypeId, countRooms(oldTypeId) - 1);
         }
         room.setRoomNo(roomNo.trim());
         room.setRoomTypeId(roomTypeId);
-        roomMapper.updateById(room);
+        try {
+            roomMapper.updateById(room);
+        } catch (DuplicateKeyException e) {
+            // 并发维护撞房间号唯一索引：文案与先查一致
+            throw new BizException(ErrorCode.PARAM_INVALID, "房间号不能为空且不可重复");
+        }
         if (reAssign) {
-            inventoryService.syncTotalForFutureDates(oldTypeId);
-            inventoryService.syncTotalForFutureDates(roomTypeId);
+            // 一次调用同步源、目标双方：建行（独立事务）必须先于双方任何库存行加锁，见 InventoryService
+            inventoryService.syncTotalForFutureDates(oldTypeId, roomTypeId);
         }
         return room;
     }

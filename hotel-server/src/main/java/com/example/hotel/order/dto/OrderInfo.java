@@ -46,6 +46,13 @@ public class OrderInfo {
         return info;
     }
 
+    /** 住客侧视图（P-C8 字段清单）：与 from 相同但不含身份证号（仅 P-A3 前台详情展示身份证） */
+    public static OrderInfo fromGuest(HotelOrder order, String roomTypeName, String roomNo) {
+        OrderInfo info = from(order, roomTypeName, roomNo);
+        info.idCard = null;
+        return info;
+    }
+
     public String getOrderNo() {
         return orderNo;
     }

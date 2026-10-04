@@ -17,4 +17,9 @@ public final class Validators {
     public static boolean isIdCard(String value) {
         return value != null && ID_CARD.matcher(value).matches();
     }
+
+    /** 分页参数：page ≥ 1，pageSize 1~50（超出上限按恶意/异常请求拒绝，防止全量拉取） */
+    public static boolean isValidPage(int page, int pageSize) {
+        return page >= 1 && pageSize >= 1 && pageSize <= 50;
+    }
 }

@@ -27,4 +27,15 @@ public class InventoryRowCreator {
     public void ensureRow(Long typeId, LocalDate stayDate) {
         inventoryMapper.insertIgnore(typeId, stayDate, inventoryMapper.countRooms(typeId));
     }
+
+    /**
+     * UC-09 维护同步前置：在独立事务中补建未来预创建窗口缺失的库存行。
+     * 与懒建同理：批量 INSERT IGNORE 若放在维护事务内，会对已存在行持有 S 锁直到事务结束，
+     * 随后 syncFutureTotal 请求 X 锁形成 S→X 升级死锁；移出后维护事务内只剩对已存在行的 UPDATE。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void ensureWindowRows(Long typeId, int totalRooms) {
+        LocalDate today = LocalDate.now();
+        inventoryMapper.preCreate(typeId, today, today.plusDays(InventoryPreCreator.PRE_CREATE_DAYS), totalRooms);
+    }
 }

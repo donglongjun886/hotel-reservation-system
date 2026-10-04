@@ -23,7 +23,10 @@ public interface OrderMapper extends BaseMapper<HotelOrder> {
             + "WHERE order_no = #{orderNo} AND status = 'CHECKED_IN'")
     int checkOut(@Param("orderNo") String orderNo);
 
-    /** 锁内复查（当前读）：该房间是否已有在住订单；须在房间行锁持有后调用，配合行锁串行化并发分房 */
-    @Select("SELECT id FROM hotel_order WHERE room_id = #{roomId} AND status = 'CHECKED_IN' LIMIT 1 FOR UPDATE")
+    /** 在住复查：该房间是否已有在住订单。按生成列 active_room_id 等值查询，命中唯一索引
+     *  uk_order_active_room；不加锁——加锁读在记录不存在时会对唯一索引间隙加锁，两个并发入住
+     *  各自锁住间隙再插入（UPDATE 触发生成列索引插入）会形成死锁。房间行锁已串行化并发分房，
+     *  本查询由 CheckedInRechecker 在独立小事务中执行（全新读视图，读到的是已提交的最新状态） */
+    @Select("SELECT id FROM hotel_order WHERE active_room_id = #{roomId} LIMIT 1")
     Long selectCheckedInIdByRoomId(@Param("roomId") Long roomId);
 }

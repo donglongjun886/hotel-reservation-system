@@ -12,8 +12,9 @@ export function createOrder(payload) {
   return request.post('/orders', payload)
 }
 
-export function listMyOrders() {
-  return request.get('/orders/mine')
+// 我的订单（分页）：返回 { list, total, page, pageSize }
+export function listMyOrders(page = 1, pageSize = 10) {
+  return request.get('/orders/mine', { params: { page, pageSize } })
 }
 
 export function getMyOrder(orderNo) {
