@@ -1,1 +1,5 @@
 .DS_Store
+hotel-server/target/
+hotel-server/src/main/resources/static/
+hotel-web/node_modules/
+hotel-web/dist/
