@@ -8,6 +8,9 @@ spring:
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3307}/hotel?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:root123}
+    hikari:
+      # 库存占用事务期间会以 REQUIRES_NEW 独立小事务建行（额外借一个连接），连接数需留一倍余量
+      maximum-pool-size: 30
   sql:
     init:
       mode: always
