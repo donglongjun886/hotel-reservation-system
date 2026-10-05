@@ -27,7 +27,7 @@
         </template>
       </el-table-column>
       <el-table-column label="下单时间" width="170">
-        <template #default="{ row }">{{ (row.createdAt || '').replace('T', ' ') }}</template>
+        <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
@@ -56,6 +56,7 @@ import AdminNav from './AdminNav.vue'
 import { listOrders } from '../../api/admin'
 import { ORDER_STATUS } from '../../api/order'
 import { formatYuan } from '../../utils/money'
+import { formatDateTime } from '../../utils/date'
 
 const router = useRouter()
 const keyword = ref('')
@@ -65,6 +66,7 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 10
 const total = ref(0)
+let requestSeq = 0
 
 onMounted(() => load(1))
 
@@ -74,15 +76,17 @@ function search() {
 }
 
 async function load(p) {
+  const seq = ++requestSeq
   loading.value = true
   try {
     const result = await listOrders(keyword.value.trim(), p, pageSize)
+    if (seq !== requestSeq) return
     orders.value = result.list
     total.value = result.total
     page.value = result.page
     loaded.value = true
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 

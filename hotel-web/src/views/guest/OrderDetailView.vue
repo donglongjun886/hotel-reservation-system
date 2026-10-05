@@ -38,6 +38,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import GuestNav from './GuestNav.vue'
 import { getMyOrder, cancelOrder, ORDER_STATUS } from '../../api/order'
 import { formatYuan } from '../../utils/money'
+import { formatDateTime } from '../../utils/date'
 
 const route = useRoute()
 const router = useRouter()
@@ -51,7 +52,7 @@ async function load() {
 }
 
 const statusOf = computed(() => ORDER_STATUS[order.value?.status] || { text: order.value?.status, type: 'info' })
-const createdAt = computed(() => (order.value?.createdAt || '').replace('T', ' '))
+const createdAt = computed(() => formatDateTime(order.value?.createdAt))
 
 async function onCancel() {
   try {

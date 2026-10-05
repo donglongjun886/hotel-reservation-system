@@ -51,11 +51,14 @@ const loaded = ref(false)
 const page = ref(1)
 const pageSize = 10
 const total = ref(0)
+let requestSeq = 0
 
 onMounted(() => load(1))
 
 async function load(p) {
+  const seq = ++requestSeq
   const result = await listMyOrders(p, pageSize)
+  if (seq !== requestSeq) return
   orders.value = result.list
   total.value = result.total
   page.value = result.page

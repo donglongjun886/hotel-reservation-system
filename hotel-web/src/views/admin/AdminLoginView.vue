@@ -40,8 +40,11 @@ async function submit() {
     }
     setSession(res.token, { role: res.role, loginName: res.loginName })
     router.push('/admin/orders')
-  } catch {
-    ElMessage.error('账号或密码错误')
+  } catch (e) {
+    // 业务错误（登录失败）才在此提示；网络/HTTP 错误 request.js 已弹"网络异常，请稍后重试"
+    if (typeof e?.code === 'number') {
+      ElMessage.error('账号或密码错误')
+    }
   } finally {
     loading.value = false
   }

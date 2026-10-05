@@ -18,3 +18,7 @@ export function tomorrow() {
 export function daysBetween(checkin, checkout) {
   return Math.round((new Date(checkout) - new Date(checkin)) / 86400000)
 }
+
+export function formatDateTime(value) {
+  return (value || '').replace('T', ' ')
+}

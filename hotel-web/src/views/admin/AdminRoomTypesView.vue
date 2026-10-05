@@ -44,7 +44,7 @@ import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import AdminNav from './AdminNav.vue'
 import { listAdminRoomTypes, createRoomType, updateRoomType } from '../../api/admin'
-import { formatYuan, yuanToFen } from '../../utils/money'
+import { formatYuan, yuanToFen, fenToYuan } from '../../utils/money'
 
 const roomTypes = ref([])
 const loaded = ref(false)
@@ -64,7 +64,7 @@ async function load() {
 function openDialog(roomType) {
   editing.value = roomType || null
   form.name = roomType?.name || ''
-  form.priceYuan = roomType ? Number(formatYuan(roomType.price)) : undefined
+  form.priceYuan = roomType ? fenToYuan(roomType.price) : undefined
   form.description = roomType?.description || ''
   errors.name = ''
   errors.price = ''

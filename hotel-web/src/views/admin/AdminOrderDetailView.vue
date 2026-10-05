@@ -21,21 +21,23 @@
         <el-descriptions-item v-if="order.idCard" label="身份证号">{{ order.idCard }}</el-descriptions-item>
       </el-descriptions>
 
+      <!-- 入住预检：任何状态都展示，非"已确认"时预检必不通过并给出原因（TC-D10③） -->
+      <el-alert
+        v-if="precheck"
+        :type="precheck.pass ? 'success' : 'error'"
+        :closable="false"
+        class="precheck"
+      >
+        <template v-if="precheck.pass">入住条件校验通过，可办理入住</template>
+        <template v-else>
+          <div>入住条件校验不通过：</div>
+          <div v-for="reason in precheck.reasons" :key="reason">{{ reason }}</div>
+        </template>
+      </el-alert>
+
       <!-- 办理入住操作区：仅状态=已确认时出现（TC-D06①） -->
       <el-card v-if="order.status === 'CONFIRMED'" class="op-card" shadow="never">
         <template #header>办理入住</template>
-        <el-alert
-          v-if="precheck"
-          :type="precheck.pass ? 'success' : 'error'"
-          :closable="false"
-          class="precheck"
-        >
-          <template v-if="precheck.pass">入住条件校验通过，可办理入住</template>
-          <template v-else>
-            <div>入住条件校验不通过：</div>
-            <div v-for="reason in precheck.reasons" :key="reason">{{ reason }}</div>
-          </template>
-        </el-alert>
         <el-form label-position="top">
           <el-form-item label="身份证号" :error="errors.idCard">
             <el-input v-model="checkInForm.idCard" placeholder="请输入18位身份证号" />
@@ -70,6 +72,7 @@ import AdminNav from './AdminNav.vue'
 import { getOrder, checkInPrecheck, listAssignableRooms, checkIn, checkOut } from '../../api/admin'
 import { ORDER_STATUS } from '../../api/order'
 import { formatYuan } from '../../utils/money'
+import { formatDateTime } from '../../utils/date'
 
 const route = useRoute()
 const router = useRouter()
@@ -88,16 +91,14 @@ onMounted(load)
 async function load() {
   const orderNo = route.params.orderNo
   order.value = await getOrder(orderNo)
+  precheck.value = await checkInPrecheck(orderNo)
   if (order.value.status === 'CONFIRMED') {
-    ;[precheck.value, assignableRooms.value] = await Promise.all([
-      checkInPrecheck(orderNo),
-      listAssignableRooms(orderNo)
-    ])
+    assignableRooms.value = await listAssignableRooms(orderNo)
   }
 }
 
 const statusOf = computed(() => ORDER_STATUS[order.value?.status] || { text: order.value?.status, type: 'info' })
-const createdAt = computed(() => (order.value?.createdAt || '').replace('T', ' '))
+const createdAt = computed(() => formatDateTime(order.value?.createdAt))
 
 async function onCheckIn() {
   errors.idCard = ID_CARD_PATTERN.test(checkInForm.idCard.trim()) ? '' : '身份证号格式不正确'
@@ -111,6 +112,9 @@ async function onCheckIn() {
     checkInForm.roomNo = ''
     precheck.value = null
     assignableRooms.value = []
+    await load()
+  } catch {
+    // 错误提示已由 request.js 弹出，这里只刷新详情、预检与房间下拉
     await load()
   } finally {
     checkingIn.value = false

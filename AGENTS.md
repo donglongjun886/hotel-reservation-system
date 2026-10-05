@@ -50,7 +50,7 @@
 
 - **依赖白名单**：只允许使用技术方案 §1.3 列出的依赖；新增依赖（含 Pinia、Flyway 等）必须先经用户确认
 - **分层纪律**：业务规则只写 service 层，controller 只做参数校验与组装响应；mapper 不跨模块使用；跨模块调用只允许 `order → inventory`、`order → room`、`room → inventory`（UC-09 房间维护需同步未来库存行）
-- **金额口径**：后端内部 BigDecimal（单位元）、DB 存 DECIMAL(10,2)、前后端接口一律传"分"单位的整数；元↔分换算只在 DTO 序列化层，禁止在前端或业务代码里换算
+- **金额口径**：后端内部 BigDecimal（单位元）、DB 存 DECIMAL(10,2)、前后端接口一律传"分"单位的整数；元↔分换算只在 DTO 序列化层，禁止在前端或业务代码里换算；前端换算只准出现在 `src/utils/money.js`（formatYuan 渲染 / yuanToFen 提交 / fenToYuan 回填）
 - **状态流转**：一律用带源状态条件的 UPDATE（如 `WHERE status='CONFIRMED'`），禁止"先查后改"
 - **统一响应**：接口返回 `Result{code, message, data}`；业务错误抛 `BizException`，message 使用原型文档中的提示文案
 - **鉴权**：登录态走 `X-Token` 请求头；住客数据一律按 token 中的 user_id 过滤，禁止信任前端传的 userId
