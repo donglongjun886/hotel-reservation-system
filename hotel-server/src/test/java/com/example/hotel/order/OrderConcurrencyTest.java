@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 对应并发测试用例：TC-G07（订单号并发唯一）、TC-G02（并发抢最后一间）、TC-G03（取消与预订交叉）。
+ * 对应并发测试用例：TC-G01（并发预订防超卖）、TC-G07（订单号并发唯一）、TC-G02（并发抢最后一间）、TC-G03（取消与预订交叉）。
  * 并发用例统一使用 2099 年日期，避开库存预创建窗口（今天 +730 天），断言以数据库终态为准。
  * 连接池放大到 60：2099 年库存行未预创建，每线程下单事务内会以 REQUIRES_NEW 懒建行（额外借一个连接）。
  */
@@ -88,6 +88,47 @@ class OrderConcurrencyTest {
             createdUserIds.clear();
         }
         inventoryMapper.delete(new QueryWrapper<DailyInventory>().ge("stay_date", FAR_FUTURE));
+    }
+
+    @Test
+    void create_concurrent_neverOversells_exactlyRoomCountSucceeds() throws InterruptedException {
+        // TC-G01：大床房共 3 间，8 个不同住客同时预订同一区间（3 晚），
+        // 恰 3 笔成功、其余全部提示已订满；终态不超卖、失败方无残留库存占用
+        int threads = 8;
+        LocalDate checkin = LocalDate.of(2099, 10, 10);
+        LocalDate checkout = LocalDate.of(2099, 10, 13);
+        List<LoginUser> users = new CopyOnWriteArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            users.add(newGuest());
+        }
+        AtomicInteger success = new AtomicInteger();
+        AtomicInteger soldOut = new AtomicInteger();
+        List<Throwable> unexpected = new CopyOnWriteArrayList<>();
+
+        runConcurrently(threads, i -> {
+            UserContext.set(users.get(i));
+            try {
+                orderService.create(buildRequest(checkin, checkout));
+                success.incrementAndGet();
+            } catch (BizException e) {
+                assertEquals(ErrorCode.SOLD_OUT.getCode(), e.getCode());
+                assertEquals("该房型所选日期已订满", e.getMessage());
+                soldOut.incrementAndGet();
+            } finally {
+                UserContext.clear();
+            }
+        }, unexpected);
+
+        assertTrue(unexpected.isEmpty(), () -> "未知异常: " + unexpected);
+        assertEquals(TOTAL_ROOMS, success.get());
+        assertEquals(threads - TOTAL_ROOMS, soldOut.get());
+        // 数据库终态：该区间有效订单恰 3 笔，每日 occupied 恰为 3（无残留）且不超 total
+        assertEquals(TOTAL_ROOMS, countActiveOrders(checkin, checkout));
+        assertEquals(List.of(TOTAL_ROOMS, TOTAL_ROOMS, TOTAL_ROOMS), occupiedCounts(checkin, checkout));
+        for (DailyInventory row : selectRows(checkin, checkout)) {
+            assertTrue(row.getOccupiedCount() <= row.getTotalCount(),
+                    () -> "occupied=" + row.getOccupiedCount() + " 超过 total=" + row.getTotalCount());
+        }
     }
 
     @Test
